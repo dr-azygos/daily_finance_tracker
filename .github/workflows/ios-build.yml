@@ -4,6 +4,10 @@ name: iOS build
 # unsigned .ipa that can be signed and installed with Sideloadly/AltStore.
 on:
   push:
+    paths:
+      - 'DailyFinanceTracker/**'
+      - 'DailyFinanceTrackerTests/**'
+      - 'DailyFinanceTracker.xcodeproj/**'
   workflow_dispatch:
 
 jobs:
