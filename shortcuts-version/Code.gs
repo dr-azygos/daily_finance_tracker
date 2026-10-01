@@ -2,18 +2,26 @@
  * Daily Finance — Google Sheets backend for an iPhone Shortcut.
  *
  * An iPhone Shortcuts automation sends every bank SMS here. This script reads the
- * amount, merchant, bank etc., adds a row to the "Transactions" sheet and replies with
- * a one-line summary ("Spent ₹250 at Swiggy · ₹1,240 today · ₹760 left") that the
- * Shortcut shows as a notification. The "Dashboard" sheet totals everything up.
+ * amount, merchant, bank etc., adds a row to that month's tab ("Oct 2026", "Nov 2026"…)
+ * and replies with a one-line summary ("Spent ₹250 at Swiggy · ₹1,240 today · ₹760 left")
+ * that the Shortcut shows as a notification. A new tab is created automatically for
+ * each month. The "Dashboard" tab totals up any month you pick.
  *
  * Setup: paste this whole file into a new Apps Script project, run `setup` once,
  * then Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone).
+ * After pasting a newer version, run `setup` again and deploy a New version.
  */
 
-const TX_SHEET = 'Transactions';
 const DASH_SHEET = 'Dashboard';
+const OLD_TX_SHEET = 'Transactions'; // single-tab layout used before monthly tabs
 const HEADERS = ['Date', 'Type', 'Amount', 'Merchant', 'Category', 'Bank', 'Account', 'Reference', 'SMS'];
-const BUDGET_CELL = 'B3';
+const BUDGET_CELL = 'B4';
+const MONTH_PICKER_CELL = 'B3';
+const LAYOUT_VERSION = 'monthly-1';
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONEY_FORMAT = '[>=10000000]"₹"#\\,##\\,##\\,##0;[>=100000]"₹"#\\,##\\,##0;"₹"#,##0';
+const CATEGORIES = ['Food & Dining', 'Groceries', 'Transport', 'Fuel', 'Shopping', 'Bills & Recharge', 'Health',
+  'Entertainment', 'Travel', 'Education', 'Transfers', 'Cash Withdrawal', 'Income', 'Other'];
 
 // ---------------------------------------------------------------------------
 // Web app entry points
@@ -64,8 +72,9 @@ function logSms_(sms) {
       return 'Not a bank transaction, nothing logged. Received: "' + text.slice(0, 70) + (text.length > 70 ? '…' : '') + '"';
     }
 
-    const sheet = getSpreadsheet_().getSheetByName(TX_SHEET);
-    const rows = recentRows_(sheet, 1000);
+    const ss = getSpreadsheet_();
+    // This month's and last month's rows, for duplicate checks and learned categories.
+    const rows = monthRows_(ss, previousMonth_(parsed.date)).concat(monthRows_(ss, parsed.date));
     const duplicate = rows.some(function (r) {
       return (parsed.referenceNumber && String(r[7]) === parsed.referenceNumber && Number(r[2]) === parsed.amount) ||
         String(r[8]) === text;
@@ -82,7 +91,7 @@ function logSms_(sms) {
       }
     }
 
-    sheet.appendRow([
+    monthSheet_(ss, parsed.date).appendRow([
       parsed.date,
       parsed.kind === 'debit' ? 'Expense' : 'Income',
       parsed.amount,
@@ -105,10 +114,9 @@ function logSms_(sms) {
 
 function todaySummary_(short) {
   const ss = getSpreadsheet_();
-  const rows = recentRows_(ss.getSheetByName(TX_SHEET), 1000);
   const today = new Date();
   let spent = 0;
-  rows.forEach(function (r) {
+  monthRows_(ss, today).forEach(function (r) {
     if (r[1] === 'Expense' && r[0] instanceof Date && sameDay_(r[0], today)) spent += Number(r[2]) || 0;
   });
   const budget = Number(ss.getSheetByName(DASH_SHEET).getRange(BUDGET_CELL).getValue()) || 0;
@@ -123,11 +131,24 @@ function todaySummary_(short) {
   return text;
 }
 
-function recentRows_(sheet, limit) {
-  const last = sheet.getLastRow();
-  if (last < 2) return [];
-  const start = Math.max(2, last - limit + 1);
-  return sheet.getRange(start, 1, last - start + 1, HEADERS.length).getValues();
+/** "Oct 2026". Built by hand (not from the locale) so it always matches the Dashboard formulas. */
+function monthName_(date) {
+  return MONTH_NAMES[date.getMonth()] + ' ' + date.getFullYear();
+}
+
+function previousMonth_(date) {
+  return new Date(date.getFullYear(), date.getMonth() - 1, 1);
+}
+
+function isMonthTab_(name) {
+  return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}$/.test(name);
+}
+
+/** All rows of a month's tab, or [] if that month has no tab yet. */
+function monthRows_(ss, date) {
+  const sheet = ss.getSheetByName(monthName_(date));
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.length).getValues();
 }
 
 /** Stops SMS text that starts with = + - @ from being treated as a formula. */
@@ -155,7 +176,7 @@ function sameDay_(a, b) {
 // Spreadsheet setup
 // ---------------------------------------------------------------------------
 
-/** Run once from the editor. Creates the "Daily Finance" spreadsheet and prints its link. */
+/** Run from the editor after pasting the script. Creates or upgrades the sheet and prints its link. */
 function setup() {
   const ss = getSpreadsheet_();
   Logger.log('Your Daily Finance sheet: ' + ss.getUrl());
@@ -164,13 +185,13 @@ function setup() {
 
 function getSpreadsheet_() {
   const active = SpreadsheetApp.getActiveSpreadsheet && SpreadsheetApp.getActiveSpreadsheet();
-  if (active) return ensureSheets_(active);
+  if (active) return ensureLayout_(active);
 
   const props = PropertiesService.getScriptProperties();
   const id = props.getProperty('SPREADSHEET_ID');
   if (id) {
     try {
-      return ensureSheets_(SpreadsheetApp.openById(id));
+      return ensureLayout_(SpreadsheetApp.openById(id));
     } catch (err) {
       // The sheet was deleted; make a new one below.
     }
@@ -178,86 +199,156 @@ function getSpreadsheet_() {
   const ss = SpreadsheetApp.create('Daily Finance');
   ss.setSpreadsheetTimeZone(Session.getScriptTimeZone());
   props.setProperty('SPREADSHEET_ID', ss.getId());
-  return ensureSheets_(ss);
+  return ensureLayout_(ss);
 }
 
-function ensureSheets_(ss) {
-  if (ss.getSheetByName(TX_SHEET) && ss.getSheetByName(DASH_SHEET)) return ss;
+/** Builds the monthly layout once, moving rows over from the older single "Transactions" tab. */
+function ensureLayout_(ss) {
+  const props = PropertiesService.getScriptProperties();
+  const key = 'LAYOUT_' + ss.getId();
+  if (props.getProperty(key) === LAYOUT_VERSION && ss.getSheetByName(DASH_SHEET)) return ss;
 
-  const money = '[>=10000000]"₹"#\\,##\\,##\\,##0;[>=100000]"₹"#\\,##\\,##0;"₹"#,##0';
-
-  let tx = ss.getSheetByName(TX_SHEET);
-  if (!tx) {
-    tx = ss.getSheets().length === 1 && ss.getSheets()[0].getLastRow() === 0
-      ? ss.getSheets()[0].setName(TX_SHEET)
-      : ss.insertSheet(TX_SHEET);
-    tx.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold').setBackground('#e0f2f1');
-    tx.setFrozenRows(1);
-    tx.getRange('A:A').setNumberFormat('dd mmm yyyy, h:mm am/pm');
-    tx.getRange('C:C').setNumberFormat(money);
-    tx.setColumnWidth(1, 160);
-    tx.setColumnWidth(4, 180);
-    tx.setColumnWidth(9, 400);
-    const categories = ['Food & Dining', 'Groceries', 'Transport', 'Fuel', 'Shopping', 'Bills & Recharge', 'Health',
-      'Entertainment', 'Travel', 'Education', 'Transfers', 'Cash Withdrawal', 'Income', 'Other'];
-    tx.getRange('E2:E').setDataValidation(
-      SpreadsheetApp.newDataValidation().requireValueInList(categories, true).setAllowInvalid(true).build());
+  // Keep the budget from the old Dashboard (it lived in B3 before the month picker was added).
+  let budget = 1000;
+  const oldDash = ss.getSheetByName(DASH_SHEET);
+  if (oldDash) {
+    const cell = props.getProperty(key) ? BUDGET_CELL : 'B3';
+    const value = oldDash.getRange(cell).getValue();
+    if (typeof value === 'number') budget = value;
   }
 
-  let dash = ss.getSheetByName(DASH_SHEET);
-  if (!dash) {
-    dash = ss.insertSheet(DASH_SHEET, 0);
-    const T = TX_SHEET + '!';
-    const expense = T + 'B:B,"Expense"';
-    const monthStart = 'EOMONTH(TODAY(),-1)+1';
-    dash.getRange('A1').setValue('Daily Finance').setFontSize(18).setFontWeight('bold');
-    dash.getRange('A3:B9').setValues([
-      ['Daily budget (edit me)', 1000],
-      ['', ''],
-      ['Spent today', '=SUMIFS(' + T + 'C:C,' + expense + ',' + T + 'A:A,">="&TODAY(),' + T + 'A:A,"<"&TODAY()+1)'],
-      ['Left today', '=IF(B3>0,B3-B5,"")'],
-      ['Spent this month', '=SUMIFS(' + T + 'C:C,' + expense + ',' + T + 'A:A,">="&' + monthStart + ')'],
-      ['Received this month', '=SUMIFS(' + T + 'C:C,' + T + 'B:B,"Income",' + T + 'A:A,">="&' + monthStart + ')'],
-      ['Spent last 7 days', '=SUMIFS(' + T + 'C:C,' + expense + ',' + T + 'A:A,">="&TODAY()-6)'],
-    ]);
-    dash.getRange('B3:B9').setNumberFormat(money).setFontWeight('bold');
-    dash.getRange('B3').setBackground('#fff8e1');
-    dash.getRange('A5:B5').setFontSize(14);
-
-    dash.getRange('A11').setValue('This month by category').setFontWeight('bold');
-    dash.getRange('A12').setFormula(
-      '=IFERROR(QUERY(' + T + 'A:E,"select E, sum(C) where B = \'Expense\' and A >= date \'"&TEXT(' + monthStart +
-      ',"yyyy-mm-dd")&"\' group by E order by sum(C) desc label E \'Category\', sum(C) \'Spent\'",1),"No spending yet")');
-    dash.getRange('B13:B40').setNumberFormat(money);
-
-    dash.getRange('D11').setValue('Last 30 days').setFontWeight('bold');
-    dash.getRange('D12').setFormula(
-      '=IFERROR(QUERY(' + T + 'A:C,"select toDate(A), sum(C) where B = \'Expense\' and A >= date \'"&TEXT(TODAY()-29' +
-      ',"yyyy-mm-dd")&"\' group by toDate(A) order by toDate(A) label toDate(A) \'Day\', sum(C) \'Spent\'",1),"")');
-    dash.getRange('D13:D50').setNumberFormat('dd mmm');
-    dash.getRange('E13:E50').setNumberFormat(money);
-
-    dash.getRange('G11').setValue('Recent').setFontWeight('bold');
-    dash.getRange('G12').setFormula('=IFERROR(QUERY(' + T + 'A:E,"select A, D, C, E where A is not null order by A desc limit 20 label A \'When\', D \'Merchant\', C \'Amount\', E \'Category\'",1),"")');
-    dash.getRange('G13:G40').setNumberFormat('dd mmm, h:mm am/pm');
-    dash.getRange('I13:I40').setNumberFormat(money);
-
-    dash.setColumnWidth(1, 190);
-    dash.setColumnWidth(7, 150);
-    dash.setColumnWidth(8, 160);
-
-    const red = SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0).setFontColor('#c62828')
-      .setRanges([dash.getRange('B6')]).build();
-    dash.setConditionalFormatRules([red]);
-
-    dash.insertChart(dash.newChart().setChartType(Charts.ChartType.PIE)
-      .addRange(dash.getRange('A12:B26')).setPosition(28, 1, 0, 0)
-      .setOption('title', 'This month by category').setOption('pieHole', 0.5).build());
-    dash.insertChart(dash.newChart().setChartType(Charts.ChartType.COLUMN)
-      .addRange(dash.getRange('D12:E42')).setPosition(28, 4, 0, 0)
-      .setOption('title', 'Daily spending').setOption('legend', { position: 'none' }).build());
+  const oldTx = ss.getSheetByName(OLD_TX_SHEET);
+  if (oldTx) {
+    if (oldTx.getLastRow() >= 2) {
+      oldTx.getRange(2, 1, oldTx.getLastRow() - 1, HEADERS.length).getValues().forEach(function (r) {
+        if (r[0] instanceof Date) monthSheet_(ss, r[0]).appendRow(r);
+      });
+    }
+    monthSheet_(ss, new Date());
+    ss.deleteSheet(oldTx);
   }
+  monthSheet_(ss, new Date());
+
+  if (oldDash) ss.deleteSheet(oldDash);
+  buildDashboard_(ss, budget);
+
+  const blank = ss.getSheetByName('Sheet1');
+  if (blank && blank.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(blank);
+
+  refreshMonthPicker_(ss);
+  props.setProperty(key, LAYOUT_VERSION);
   return ss;
+}
+
+/** The tab for the month `date` falls in, created (newest first, after the Dashboard) if needed. */
+function monthSheet_(ss, date) {
+  const name = monthName_(date);
+  let sheet = ss.getSheetByName(name);
+  if (sheet) return sheet;
+
+  // Place it after the Dashboard and before any older month.
+  const sheets = ss.getSheets();
+  let index = sheets.length;
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  for (let i = 0; i < sheets.length; i++) {
+    const n = sheets[i].getName();
+    if (!isMonthTab_(n)) continue;
+    const parts = n.split(' ');
+    if (new Date(Number(parts[1]), MONTH_NAMES.indexOf(parts[0]), 1) < start) { index = i; break; }
+  }
+  sheet = ss.insertSheet(name, index);
+
+  sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold').setBackground('#e0f2f1');
+  sheet.setFrozenRows(1);
+  sheet.getRange('A:A').setNumberFormat('dd mmm yyyy, h:mm am/pm');
+  sheet.getRange('C:C').setNumberFormat(MONEY_FORMAT);
+  sheet.setColumnWidth(1, 160);
+  sheet.setColumnWidth(4, 180);
+  sheet.setColumnWidth(9, 400);
+  sheet.getRange('E2:E').setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(CATEGORIES, true).setAllowInvalid(true).build());
+
+  refreshMonthPicker_(ss);
+  return sheet;
+}
+
+/** Fills the Dashboard's "Pick another month" dropdown with the month tabs that exist. */
+function refreshMonthPicker_(ss) {
+  const dash = ss.getSheetByName(DASH_SHEET);
+  if (!dash) return;
+  const months = ss.getSheets().map(function (sh) { return sh.getName(); }).filter(isMonthTab_);
+  if (!months.length) return;
+  dash.getRange(MONTH_PICKER_CELL).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(months, true).setAllowInvalid(false).build());
+}
+
+function buildDashboard_(ss, budget) {
+  const dash = ss.insertSheet(DASH_SHEET, 0);
+
+  // Month names are built with CHOOSE so they never depend on the sheet's language settings.
+  const name = function (dateExpr) {
+    return 'CHOOSE(MONTH(' + dateExpr + '),"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")&" "&YEAR(' + dateExpr + ')';
+  };
+  const col = function (tabExpr, c) { return 'INDIRECT("\'"&' + tabExpr + '&"\'!' + c + ':' + c + '")'; };
+  const block = function (tabExpr, range) { return '{INDIRECT("\'"&' + tabExpr + '&"\'!' + range + '")}'; };
+  const CUR = name('TODAY()');
+  const PREV = name('EOMONTH(TODAY(),-1)');
+  const SEL = '$B$2';
+  const spentSince = function (tab, from) {
+    return 'IFERROR(SUMIFS(' + col(tab, 'C') + ',' + col(tab, 'B') + ',"Expense",' + col(tab, 'A') + ',">="&' + from + '),0)';
+  };
+
+  dash.getRange('A1').setValue('Daily Finance').setFontSize(18).setFontWeight('bold');
+  dash.getRange('A2:B10').setValues([
+    ['Showing month', '=IF(B3="",' + CUR + ',B3)'],
+    ['Pick another month', ''],
+    ['Daily budget (edit me)', budget],
+    ['', ''],
+    ['Spent today', '=IFERROR(SUMIFS(' + col(CUR, 'C') + ',' + col(CUR, 'B') + ',"Expense",' + col(CUR, 'A') + ',">="&TODAY(),' + col(CUR, 'A') + ',"<"&TODAY()+1),0)'],
+    ['Left today', '=IF(B4>0,B4-B6,"")'],
+    ['="Spent in "&B2', '=IFERROR(SUMIFS(' + col(SEL, 'C') + ',' + col(SEL, 'B') + ',"Expense"),0)'],
+    ['="Received in "&B2', '=IFERROR(SUMIFS(' + col(SEL, 'C') + ',' + col(SEL, 'B') + ',"Income"),0)'],
+    ['Spent last 7 days', '=' + spentSince(CUR, 'TODAY()-6') + '+' + spentSince(PREV, 'TODAY()-6')],
+  ]);
+  dash.getRange('B2').setFontWeight('bold').setFontSize(12);
+  dash.getRange('B3').setBackground('#fff8e1').setNote('Choose an earlier month to look back. Clear it to return to this month.');
+  dash.getRange('B4').setBackground('#fff8e1').setNumberFormat(MONEY_FORMAT);
+  dash.getRange('B6:B10').setNumberFormat(MONEY_FORMAT).setFontWeight('bold');
+  dash.getRange('A6:B6').setFontSize(14);
+
+  dash.getRange('A12').setValue('By category').setFontWeight('bold');
+  dash.getRange('A13').setFormula('=IFERROR(QUERY(' + block(SEL, 'A2:E') +
+    ',"select Col5, sum(Col3) where Col2 = \'Expense\' group by Col5 order by sum(Col3) desc label Col5 \'Category\', sum(Col3) \'Spent\'",0),"No spending yet")');
+  dash.getRange('B14:B40').setNumberFormat(MONEY_FORMAT);
+
+  dash.getRange('D12').setValue('Day by day').setFontWeight('bold');
+  dash.getRange('D13').setFormula('=IFERROR(QUERY(' + block(SEL, 'A2:C') +
+    ',"select toDate(Col1), sum(Col3) where Col2 = \'Expense\' and Col1 is not null group by toDate(Col1) order by toDate(Col1) label toDate(Col1) \'Day\', sum(Col3) \'Spent\'",0),"")');
+  dash.getRange('D14:D45').setNumberFormat('dd mmm');
+  dash.getRange('E14:E45').setNumberFormat(MONEY_FORMAT);
+
+  dash.getRange('G12').setValue('Recent').setFontWeight('bold');
+  dash.getRange('G13').setFormula('=IFERROR(QUERY(' + block(SEL, 'A2:E') +
+    ',"select Col1, Col4, Col3, Col5 where Col1 is not null order by Col1 desc limit 20 label Col1 \'When\', Col4 \'Merchant\', Col3 \'Amount\', Col5 \'Category\'",0),"")');
+  dash.getRange('G14:G40').setNumberFormat('dd mmm, h:mm am/pm');
+  dash.getRange('I14:I40').setNumberFormat(MONEY_FORMAT);
+
+  dash.setColumnWidth(1, 190);
+  dash.setColumnWidth(2, 120);
+  dash.setColumnWidth(7, 150);
+  dash.setColumnWidth(8, 160);
+
+  const red = SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0).setFontColor('#c62828')
+    .setRanges([dash.getRange('B7')]).build();
+  dash.setConditionalFormatRules([red]);
+
+  dash.insertChart(dash.newChart().setChartType(Charts.ChartType.PIE)
+    .addRange(dash.getRange('A13:B27')).setPosition(30, 1, 0, 0)
+    .setOption('title', 'Spending by category').setOption('pieHole', 0.5).build());
+  dash.insertChart(dash.newChart().setChartType(Charts.ChartType.COLUMN)
+    .addRange(dash.getRange('D13:E44')).setPosition(30, 4, 0, 0)
+    .setOption('title', 'Daily spending').setOption('legend', { position: 'none' }).build());
+  return dash;
 }
 
 // ---------------------------------------------------------------------------
