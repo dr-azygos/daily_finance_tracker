@@ -1,0 +1,49 @@
+name: iOS build
+
+# Builds the app on a GitHub-hosted Mac, runs the parser tests, and produces an
+# unsigned .ipa that can be signed and installed with Sideloadly/AltStore.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Run tests
+        run: |
+          DEVICE=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [0-9]+[^(]*' | sed 's/ *$//')
+          echo "Testing on: $DEVICE"
+          xcodebuild test \
+            -project DailyFinanceTracker.xcodeproj \
+            -scheme DailyFinanceTracker \
+            -destination "platform=iOS Simulator,name=$DEVICE" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build unsigned app for iPhone
+        run: |
+          xcodebuild build \
+            -project DailyFinanceTracker.xcodeproj \
+            -scheme DailyFinanceTracker \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Package .ipa
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/DailyFinanceTracker.app Payload/
+          zip -qr DailyFinanceTracker.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DailyFinanceTracker-ipa
+          path: DailyFinanceTracker.ipa
+          retention-days: 30
