@@ -29,6 +29,9 @@ function doPost(e) {
       sms = e.postData.contents;
     }
   }
+  // Shortcuts sometimes sends a list or a rich object instead of plain text.
+  if (Array.isArray(sms)) sms = sms.join('\n');
+  if (sms && typeof sms === 'object') sms = sms.content || sms.text || JSON.stringify(sms);
   return reply_(logSms_(String(sms)));
 }
 
@@ -51,12 +54,18 @@ function logSms_(sms) {
   lock.waitLock(15000);
   try {
     const now = new Date();
-    const parsed = parseBankSms(sms, now);
-    if (!parsed) return 'Not a bank transaction, nothing logged.';
+    const text = sms.trim();
+    if (!text) {
+      return 'Nothing received. The Shortcut sent an empty message: set the automation\'s Input to Shortcut Input › Content.';
+    }
+    const parsed = parseBankSms(text, now);
+    if (!parsed) {
+      // Echo what arrived, so a message that should have been logged is easy to spot.
+      return 'Not a bank transaction, nothing logged. Received: "' + text.slice(0, 70) + (text.length > 70 ? '…' : '') + '"';
+    }
 
     const sheet = getSpreadsheet_().getSheetByName(TX_SHEET);
     const rows = recentRows_(sheet, 1000);
-    const text = sms.trim();
     const duplicate = rows.some(function (r) {
       return (parsed.referenceNumber && String(r[7]) === parsed.referenceNumber && Number(r[2]) === parsed.amount) ||
         String(r[8]) === text;
