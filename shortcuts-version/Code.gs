@@ -17,13 +17,15 @@ const OLD_TX_SHEET = 'Transactions'; // single-tab layout used before monthly ta
 const HEADERS = ['Date', 'Type', 'Amount', 'Merchant', 'Category', 'Bank', 'Account', 'Reference', 'SMS'];
 const BUDGET_CELL = 'B4';
 const MONTH_PICKER_CELL = 'B3';
-const LAYOUT_VERSION = 'monthly-2';
+const LAYOUT_VERSION = 'monthly-3';
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONEY_FORMAT = '[>=10000000]"₹"#\\,##\\,##\\,##0;[>=100000]"₹"#\\,##\\,##0;"₹"#,##0';
 const CATEGORIES = ['Food & Dining', 'Groceries', 'Transport', 'Fuel', 'Shopping', 'Bills & Recharge', 'Health',
-  'Entertainment', 'Travel', 'Education', 'Transfers', 'Cash Withdrawal', 'Card Bill Payment', 'Income', 'Other'];
+  'Entertainment', 'Travel', 'Education', 'Rent', 'Transfers', 'Cash Withdrawal', 'Card Bill Payment', 'Income', 'Other'];
 // Paying a credit card bill isn't new spending: the card purchases are already logged.
 const CARD_BILL = 'Card Bill Payment';
+// Fixed monthly payments: counted in the month's totals but kept out of the daily budget.
+const RENT = 'Rent';
 
 // ---------------------------------------------------------------------------
 // Web app entry points
@@ -122,7 +124,7 @@ function todaySummary_(short) {
   const today = new Date();
   let spent = 0;
   monthRows_(ss, today).forEach(function (r) {
-    if (r[1] === 'Expense' && r[4] !== CARD_BILL && r[0] instanceof Date && sameDay_(r[0], today)) spent += Number(r[2]) || 0;
+    if (r[1] === 'Expense' && r[4] !== CARD_BILL && r[4] !== RENT && r[0] instanceof Date && sameDay_(r[0], today)) spent += Number(r[2]) || 0;
   });
   const budget = Number(ss.getSheetByName(DASH_SHEET).getRange(BUDGET_CELL).getValue()) || 0;
   let text = short ? inr_(spent) + ' today' : "You've spent " + inr_(spent) + ' today';
@@ -309,7 +311,7 @@ function buildDashboard_(ss, budget) {
   const PREV = name('EOMONTH(TODAY(),-1)');
   const SEL = '$B$2';
   const spentSince = function (tab, from) {
-    return 'IFERROR(SUMIFS(' + col(tab, 'C') + ',' + col(tab, 'B') + ',"Expense",' + col(tab, 'E') + ',"<>' + CARD_BILL + '",' + col(tab, 'A') + ',">="&' + from + '),0)';
+    return 'IFERROR(SUMIFS(' + col(tab, 'C') + ',' + col(tab, 'B') + ',"Expense",' + col(tab, 'E') + ',"<>' + CARD_BILL + '",' + col(tab, 'E') + ',"<>' + RENT + '",' + col(tab, 'A') + ',">="&' + from + '),0)';
   };
 
   dash.getRange('A1').setValue('Daily Finance').setFontSize(18).setFontWeight('bold');
@@ -318,11 +320,11 @@ function buildDashboard_(ss, budget) {
     ['Pick another month', ''],
     ['Daily budget (edit me)', budget],
     ['', ''],
-    ['Spent today', '=IFERROR(SUMIFS(' + col(CUR, 'C') + ',' + col(CUR, 'B') + ',"Expense",' + col(CUR, 'E') + ',"<>' + CARD_BILL + '",' + col(CUR, 'A') + ',">="&TODAY(),' + col(CUR, 'A') + ',"<"&TODAY()+1),0)'],
+    ['Spent today (excl. rent)', '=IFERROR(SUMIFS(' + col(CUR, 'C') + ',' + col(CUR, 'B') + ',"Expense",' + col(CUR, 'E') + ',"<>' + CARD_BILL + '",' + col(CUR, 'E') + ',"<>' + RENT + '",' + col(CUR, 'A') + ',">="&TODAY(),' + col(CUR, 'A') + ',"<"&TODAY()+1),0)'],
     ['Left today', '=IF(B4>0,B4-B6,"")'],
     ['="Spent in "&B2', '=IFERROR(SUMIFS(' + col(SEL, 'C') + ',' + col(SEL, 'B') + ',"Expense",' + col(SEL, 'E') + ',"<>' + CARD_BILL + '"),0)'],
     ['="Received in "&B2', '=IFERROR(SUMIFS(' + col(SEL, 'C') + ',' + col(SEL, 'B') + ',"Income"),0)'],
-    ['Spent last 7 days', '=' + spentSince(CUR, 'TODAY()-6') + '+' + spentSince(PREV, 'TODAY()-6')],
+    ['Spent last 7 days (excl. rent)', '=' + spentSince(CUR, 'TODAY()-6') + '+' + spentSince(PREV, 'TODAY()-6')],
   ]);
   dash.getRange('B2').setFontWeight('bold').setFontSize(12);
   dash.getRange('B3').setBackground('#fff8e1').setNote('Choose an earlier month to look back. Clear it to return to this month.');
@@ -335,9 +337,9 @@ function buildDashboard_(ss, budget) {
     ',"select Col5, sum(Col3) where Col2 = \'Expense\' and Col5 <> \'' + CARD_BILL + '\' group by Col5 order by sum(Col3) desc label Col5 \'Category\', sum(Col3) \'Spent\'",0),"No spending yet")');
   dash.getRange('B14:B40').setNumberFormat(MONEY_FORMAT);
 
-  dash.getRange('D12').setValue('Day by day').setFontWeight('bold');
+  dash.getRange('D12').setValue('Day by day (excl. rent)').setFontWeight('bold');
   dash.getRange('D13').setFormula('=IFERROR(QUERY(' + block(SEL, 'A2:E') +
-    ',"select toDate(Col1), sum(Col3) where Col2 = \'Expense\' and Col5 <> \'' + CARD_BILL + '\' and Col1 is not null group by toDate(Col1) order by toDate(Col1) label toDate(Col1) \'Day\', sum(Col3) \'Spent\'",0),"")');
+    ',"select toDate(Col1), sum(Col3) where Col2 = \'Expense\' and Col5 <> \'' + CARD_BILL + '\' and Col5 <> \'' + RENT + '\' and Col1 is not null group by toDate(Col1) order by toDate(Col1) label toDate(Col1) \'Day\', sum(Col3) \'Spent\'",0),"")');
   dash.getRange('D14:D45').setNumberFormat('dd mmm');
   dash.getRange('E14:E45').setNumberFormat(MONEY_FORMAT);
 
@@ -387,8 +389,15 @@ const IGNORE_RE = new RegExp([
   '\\b(total|min|minimum) (amt |amount )?due\\b|\\bstmt\\b|\\bstatement (dt|date|generated|is ready|for)\\b',
   // Merchant receipts ("Your Swiggy Order #… was paid"); the bank's own SMS records the payment.
   '\\byour [a-z]+ order\\b|\\border (#|no\\b|id\\b)',
+  // Promotions and reminders that mention an amount (the Shortcut now forwards every SMS with Rs / INR / ₹).
+  '\\b(offers?|discount|coupon|voucher|promo ?code|sale|deals?|lucky|congratulations|winner)\\b',
+  'cashback (of )?up ?to|get (flat |upto |up to )?(rs|inr|₹)|\\bwin\\b|\\bflat (rs\\.? ?|inr ?|₹ ?)?\\d+ off|\\d+ ?% off',
+  '(shop|buy|order|recharge|pay|apply|book|upgrade|renew) now|click (here|on)|t ?& ?c|tnc|limited (period|time)|hurry|last day',
+  '\\b(expires?|expiring|validity|data pack|unlimited calls)\\b|plan (of|at|@) (rs|inr|₹)|bill (of|for) (rs|inr|₹)[^.]{0,40}(generated|due)|bill (is )?generated',
+  'reward points? (balance|worth|expir|will)|credit limit (has been )?(increased|enhanced)|loan (of|up ?to|amount)|emi (of|starting|as low)|premium (is )?due|insurance cover',
 ].join('|'), 'i');
 
+const TRANSACTION_CONTEXT_RE = /a\/c|\bacc?t\b|account|\bcard\b|\bupi\b|\bvpa\b|\bref\b|\brefno\b|\bimps\b|\bneft\b|\brtgs\b|\btxn\b|\bwallet\b|\batm\b|\bbank\b/i;
 const DEBIT_RE = /\b(debited|spent|sent|paid|withdrawn|withdrawal|purchase|purchased|deducted|used|using|txn of|transaction of|transferred to|payment of|transfer of)\b/i;
 const CREDIT_RE = /\b(credited|received|deposited|refund|refunded|reversed|reversal)\b/i;
 const CURRENCY_AMOUNT_RE = /(?:(?<![a-z])(?:rs|inr)\.?|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/gi;
@@ -461,6 +470,9 @@ function parseBankSms(raw, now) {
   now = now || new Date();
   const text = String(raw || '').replace(/\s+/g, ' ').trim();
   if (!text || IGNORE_RE.test(text)) return null;
+
+  // A real transaction alert names an account, card, UPI/IMPS/NEFT transfer or reference.
+  if (!TRANSACTION_CONTEXT_RE.test(text)) return null;
 
   const kind = detectKind_(text);
   const amount = detectAmount_(text);
@@ -559,6 +571,7 @@ function classify_(merchant, kind) {
   if (kind === 'credit') return 'Income';
   const hay = ' ' + merchant.toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
   if (/ cred | dreamplug|credit ?card|card bill| cc bill|card payment/.test(hay)) return CARD_BILL;
+  if (/ (rent|house rent|nobroker|nestaway) /.test(hay)) return RENT;
   for (let i = 0; i < CATEGORY_RULES.length; i++) {
     const hit = CATEGORY_RULES[i][1].some(function (k) {
       // Short keywords must be whole words so "tea" doesn't match "steam".

@@ -28,6 +28,8 @@ enum BankSMSParser {
         guard !text.isEmpty, text.range(of: ignorePattern, options: .regularExpression) == nil else {
             return nil
         }
+        // A real transaction alert names an account, card, UPI/IMPS/NEFT transfer or reference.
+        guard text.range(of: transactionContextPattern, options: .regularExpression) != nil else { return nil }
         guard let kind = detectKind(in: text), let amount = detectAmount(in: text), amount > 0 else {
             return nil
         }
@@ -73,7 +75,16 @@ enum BankSMSParser {
         // Card issuers confirming a bill payment, and statement / due-date reminders.
         "received (as |a |your )?payment|payment (towards|for|against) your [a-z ]{0,25}card|thank you for (the |your )?payment",
         "\\b(total|min|minimum) (amt |amount )?due\\b|\\bstmt\\b|\\bstatement (dt|date|generated|is ready|for)\\b",
+        // Promotions and reminders that mention an amount (the Shortcut now forwards every SMS with Rs / INR / ₹).
+        "\\b(offers?|discount|coupon|voucher|promo ?code|sale|deals?|lucky|congratulations|winner)\\b",
+        "cashback (of )?up ?to|get (flat |upto |up to )?(rs|inr|₹)|\\bwin\\b|\\bflat (rs\\.? ?|inr ?|₹ ?)?\\d+ off|\\d+ ?% off",
+        "(shop|buy|order|recharge|pay|apply|book|upgrade|renew) now|click (here|on)|t ?& ?c|tnc|limited (period|time)|hurry|last day",
+        "\\b(expires?|expiring|validity|data pack|unlimited calls)\\b|plan (of|at|@) (rs|inr|₹)|bill (of|for) (rs|inr|₹)[^.]{0,40}(generated|due)|bill (is )?generated",
+        "reward points? (balance|worth|expir|will)|credit limit (has been )?(increased|enhanced)|loan (of|up ?to|amount)|emi (of|starting|as low)|premium (is )?due|insurance cover",
     ].joined(separator: "|")
+
+    private static let transactionContextPattern =
+        "(?i)a/c|\\bacc?t\\b|account|\\bcard\\b|\\bupi\\b|\\bvpa\\b|\\bref\\b|\\brefno\\b|\\bimps\\b|\\bneft\\b|\\brtgs\\b|\\btxn\\b|\\bwallet\\b|\\batm\\b|\\bbank\\b"
 
     // MARK: - Debit / credit
 
