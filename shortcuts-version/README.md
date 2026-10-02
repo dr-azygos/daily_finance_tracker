@@ -6,7 +6,7 @@ A Shortcuts automation on the iPhone sends each bank SMS to `Code.gs`, deployed 
 
 > Spent ₹250 at Swiggy · ₹1,240 today · ₹760 left
 
-Each month gets its own tab (`Oct 2026`, `Nov 2026`, …), created automatically with the first SMS of the month. An older SMS pasted in later goes to its own month's tab. The **Dashboard** tab shows today vs. the daily budget (B4), the selected month's spending and income, a category chart, day-by-day spending and recent transactions. Pick an earlier month in B3 to look back. If you change a merchant's category in a month tab, the next SMS from that merchant gets the same category. Duplicate SMS are skipped.
+Each month gets its own tab (`Oct 2026`, `Nov 2026`, …), created automatically with the first SMS of the month. An older SMS pasted in later goes to its own month's tab. The **Dashboard** tab shows today vs. the daily budget (B4), the selected month's spending and income, a category chart, day-by-day spending and recent transactions. Pick an earlier month in B3 to look back. If you change a merchant's category in a month tab, the next SMS from that merchant gets the same category. Duplicate SMS are skipped. Credit card bill payments (CRED, "card bill") are logged as `Card Bill Payment` with type `Transfer` and left out of spending totals, since the card purchases are already counted. Merchant order receipts ("Your Swiggy Order #…") are ignored in favour of the bank's own SMS.
 
 Sheets created with the earlier single-tab layout (one "Transactions" tab) are upgraded on the next `setup` run or SMS: rows move into month tabs and the budget is kept.
 

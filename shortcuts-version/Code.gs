@@ -17,11 +17,13 @@ const OLD_TX_SHEET = 'Transactions'; // single-tab layout used before monthly ta
 const HEADERS = ['Date', 'Type', 'Amount', 'Merchant', 'Category', 'Bank', 'Account', 'Reference', 'SMS'];
 const BUDGET_CELL = 'B4';
 const MONTH_PICKER_CELL = 'B3';
-const LAYOUT_VERSION = 'monthly-1';
+const LAYOUT_VERSION = 'monthly-2';
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONEY_FORMAT = '[>=10000000]"₹"#\\,##\\,##\\,##0;[>=100000]"₹"#\\,##\\,##0;"₹"#,##0';
 const CATEGORIES = ['Food & Dining', 'Groceries', 'Transport', 'Fuel', 'Shopping', 'Bills & Recharge', 'Health',
-  'Entertainment', 'Travel', 'Education', 'Transfers', 'Cash Withdrawal', 'Income', 'Other'];
+  'Entertainment', 'Travel', 'Education', 'Transfers', 'Cash Withdrawal', 'Card Bill Payment', 'Income', 'Other'];
+// Paying a credit card bill isn't new spending: the card purchases are already logged.
+const CARD_BILL = 'Card Bill Payment';
 
 // ---------------------------------------------------------------------------
 // Web app entry points
@@ -84,7 +86,7 @@ function logSms_(sms) {
     // Reuse the category you last gave this merchant, so your corrections stick.
     if (parsed.kind === 'debit') {
       for (let i = rows.length - 1; i >= 0; i--) {
-        if (String(rows[i][3]).toLowerCase() === parsed.merchant.toLowerCase() && rows[i][1] === 'Expense') {
+        if (String(rows[i][3]).toLowerCase() === parsed.merchant.toLowerCase() && rows[i][1] !== 'Income') {
           parsed.category = String(rows[i][4]);
           break;
         }
@@ -93,7 +95,7 @@ function logSms_(sms) {
 
     monthSheet_(ss, parsed.date).appendRow([
       parsed.date,
-      parsed.kind === 'debit' ? 'Expense' : 'Income',
+      parsed.kind === 'credit' ? 'Income' : (parsed.category === CARD_BILL ? 'Transfer' : 'Expense'),
       parsed.amount,
       safe_(parsed.merchant),
       parsed.category,
@@ -106,6 +108,9 @@ function logSms_(sms) {
     if (parsed.kind === 'credit') {
       return 'Received ' + inr_(parsed.amount) + ' from ' + parsed.merchant;
     }
+    if (parsed.category === CARD_BILL) {
+      return 'Card bill ' + inr_(parsed.amount) + ' paid via ' + parsed.merchant + ' (not counted as spending) · ' + todaySummary_(true);
+    }
     return 'Spent ' + inr_(parsed.amount) + ' at ' + parsed.merchant + ' · ' + todaySummary_(true);
   } finally {
     lock.releaseLock();
@@ -117,7 +122,7 @@ function todaySummary_(short) {
   const today = new Date();
   let spent = 0;
   monthRows_(ss, today).forEach(function (r) {
-    if (r[1] === 'Expense' && r[0] instanceof Date && sameDay_(r[0], today)) spent += Number(r[2]) || 0;
+    if (r[1] === 'Expense' && r[4] !== CARD_BILL && r[0] instanceof Date && sameDay_(r[0], today)) spent += Number(r[2]) || 0;
   });
   const budget = Number(ss.getSheetByName(DASH_SHEET).getRange(BUDGET_CELL).getValue()) || 0;
   let text = short ? inr_(spent) + ' today' : "You've spent " + inr_(spent) + ' today';
@@ -221,7 +226,16 @@ function ensureLayout_(ss) {
   if (oldTx) {
     if (oldTx.getLastRow() >= 2) {
       oldTx.getRange(2, 1, oldTx.getLastRow() - 1, HEADERS.length).getValues().forEach(function (r) {
-        if (r[0] instanceof Date) monthSheet_(ss, r[0]).appendRow(r);
+        if (!(r[0] instanceof Date)) return;
+        if (IGNORE_RE.test(String(r[8]))) return; // e.g. merchant order receipts logged by older versions
+        if (r[1] === 'Expense' && classify_(String(r[3]), 'debit') === CARD_BILL) {
+          r[1] = 'Transfer';
+          r[4] = CARD_BILL;
+        }
+        // Keep account and reference numbers as text.
+        if (r[6] !== '') r[6] = "'" + r[6];
+        if (r[7] !== '') r[7] = "'" + r[7];
+        monthSheet_(ss, r[0]).appendRow(r);
       });
     }
     monthSheet_(ss, new Date());
@@ -295,7 +309,7 @@ function buildDashboard_(ss, budget) {
   const PREV = name('EOMONTH(TODAY(),-1)');
   const SEL = '$B$2';
   const spentSince = function (tab, from) {
-    return 'IFERROR(SUMIFS(' + col(tab, 'C') + ',' + col(tab, 'B') + ',"Expense",' + col(tab, 'A') + ',">="&' + from + '),0)';
+    return 'IFERROR(SUMIFS(' + col(tab, 'C') + ',' + col(tab, 'B') + ',"Expense",' + col(tab, 'E') + ',"<>' + CARD_BILL + '",' + col(tab, 'A') + ',">="&' + from + '),0)';
   };
 
   dash.getRange('A1').setValue('Daily Finance').setFontSize(18).setFontWeight('bold');
@@ -304,9 +318,9 @@ function buildDashboard_(ss, budget) {
     ['Pick another month', ''],
     ['Daily budget (edit me)', budget],
     ['', ''],
-    ['Spent today', '=IFERROR(SUMIFS(' + col(CUR, 'C') + ',' + col(CUR, 'B') + ',"Expense",' + col(CUR, 'A') + ',">="&TODAY(),' + col(CUR, 'A') + ',"<"&TODAY()+1),0)'],
+    ['Spent today', '=IFERROR(SUMIFS(' + col(CUR, 'C') + ',' + col(CUR, 'B') + ',"Expense",' + col(CUR, 'E') + ',"<>' + CARD_BILL + '",' + col(CUR, 'A') + ',">="&TODAY(),' + col(CUR, 'A') + ',"<"&TODAY()+1),0)'],
     ['Left today', '=IF(B4>0,B4-B6,"")'],
-    ['="Spent in "&B2', '=IFERROR(SUMIFS(' + col(SEL, 'C') + ',' + col(SEL, 'B') + ',"Expense"),0)'],
+    ['="Spent in "&B2', '=IFERROR(SUMIFS(' + col(SEL, 'C') + ',' + col(SEL, 'B') + ',"Expense",' + col(SEL, 'E') + ',"<>' + CARD_BILL + '"),0)'],
     ['="Received in "&B2', '=IFERROR(SUMIFS(' + col(SEL, 'C') + ',' + col(SEL, 'B') + ',"Income"),0)'],
     ['Spent last 7 days', '=' + spentSince(CUR, 'TODAY()-6') + '+' + spentSince(PREV, 'TODAY()-6')],
   ]);
@@ -318,12 +332,12 @@ function buildDashboard_(ss, budget) {
 
   dash.getRange('A12').setValue('By category').setFontWeight('bold');
   dash.getRange('A13').setFormula('=IFERROR(QUERY(' + block(SEL, 'A2:E') +
-    ',"select Col5, sum(Col3) where Col2 = \'Expense\' group by Col5 order by sum(Col3) desc label Col5 \'Category\', sum(Col3) \'Spent\'",0),"No spending yet")');
+    ',"select Col5, sum(Col3) where Col2 = \'Expense\' and Col5 <> \'' + CARD_BILL + '\' group by Col5 order by sum(Col3) desc label Col5 \'Category\', sum(Col3) \'Spent\'",0),"No spending yet")');
   dash.getRange('B14:B40').setNumberFormat(MONEY_FORMAT);
 
   dash.getRange('D12').setValue('Day by day').setFontWeight('bold');
-  dash.getRange('D13').setFormula('=IFERROR(QUERY(' + block(SEL, 'A2:C') +
-    ',"select toDate(Col1), sum(Col3) where Col2 = \'Expense\' and Col1 is not null group by toDate(Col1) order by toDate(Col1) label toDate(Col1) \'Day\', sum(Col3) \'Spent\'",0),"")');
+  dash.getRange('D13').setFormula('=IFERROR(QUERY(' + block(SEL, 'A2:E') +
+    ',"select toDate(Col1), sum(Col3) where Col2 = \'Expense\' and Col5 <> \'' + CARD_BILL + '\' and Col1 is not null group by toDate(Col1) order by toDate(Col1) label toDate(Col1) \'Day\', sum(Col3) \'Spent\'",0),"")');
   dash.getRange('D14:D45').setNumberFormat('dd mmm');
   dash.getRange('E14:E45').setNumberFormat(MONEY_FORMAT);
 
@@ -368,6 +382,8 @@ const IGNORE_RE = new RegExp([
   'pre-?approved|loan offer|apply now|insta ?loan|eligible for',
   '\\b(declined|failed|unsuccessful)\\b',
   '\\bpayment (of [^.]{0,30})?(has been |is )?received\\b',
+  // Merchant receipts ("Your Swiggy Order #… was paid"); the bank's own SMS records the payment.
+  '\\byour [a-z]+ order\\b|\\border (#|no\\b|id\\b)',
 ].join('|'), 'i');
 
 const DEBIT_RE = /\b(debited|spent|sent|paid|withdrawn|withdrawal|purchase|purchased|deducted|used|using|txn of|transaction of|transferred to)\b/i;
@@ -539,6 +555,7 @@ function prettify_(value) {
 function classify_(merchant, kind) {
   if (kind === 'credit') return 'Income';
   const hay = ' ' + merchant.toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
+  if (/ cred | dreamplug|credit ?card|card bill| cc bill|card payment/.test(hay)) return CARD_BILL;
   for (let i = 0; i < CATEGORY_RULES.length; i++) {
     const hit = CATEGORY_RULES[i][1].some(function (k) {
       // Short keywords must be whole words so "tea" doesn't match "steam".
