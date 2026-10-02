@@ -382,6 +382,9 @@ const IGNORE_RE = new RegExp([
   'pre-?approved|loan offer|apply now|insta ?loan|eligible for',
   '\\b(declined|failed|unsuccessful)\\b',
   '\\bpayment (of [^.]{0,30})?(has been |is )?received\\b',
+  // Card issuers confirming a bill payment, and statement / due-date reminders.
+  'received (as |a |your )?payment|payment (towards|for|against) your [a-z ]{0,25}card|thank you for (the |your )?payment',
+  '\\b(total|min|minimum) (amt |amount )?due\\b|\\bstmt\\b|\\bstatement (dt|date|generated|is ready|for)\\b',
   // Merchant receipts ("Your Swiggy Order #… was paid"); the bank's own SMS records the payment.
   '\\byour [a-z]+ order\\b|\\border (#|no\\b|id\\b)',
 ].join('|'), 'i');

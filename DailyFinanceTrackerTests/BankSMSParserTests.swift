@@ -219,6 +219,8 @@ final class BankSMSParserTests: XCTestCase {
             "Your credit card bill of Rs 12,450 is due on 15-10-26. Minimum amount due Rs 620",
             "RAHUL has requested money from you. Amount: Rs 200. Pay via any UPI app",
             "Hi, see you at the clinic tomorrow",
+            "Thank you Rs.1849.78/- has been received as payment towards your PNB credit card  XX3268 via Online Payment. Your available credit limit is Rs.35515.37. - PNB",
+            "Your PNB Card XX3268 stmt dt 16-09-2026 total Due Rs. 1849.78 and Min Due Rs. 1197.66 payable by 06-10-2026 has been sent. Visit www.pnbindia.in. Please ignore if paid. -PNB",
         ]
         for message in messages {
             XCTAssertNil(parse(message), message)

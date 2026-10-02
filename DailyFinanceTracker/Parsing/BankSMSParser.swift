@@ -70,6 +70,9 @@ enum BankSMSParser {
         "\\b(declined|failed|unsuccessful)\\b",
         // Credit card bill payment acknowledgements; the bank-side debit SMS already records it.
         "\\bpayment (of [^.]{0,30})?(has been |is )?received\\b",
+        // Card issuers confirming a bill payment, and statement / due-date reminders.
+        "received (as |a |your )?payment|payment (towards|for|against) your [a-z ]{0,25}card|thank you for (the |your )?payment",
+        "\\b(total|min|minimum) (amt |amount )?due\\b|\\bstmt\\b|\\bstatement (dt|date|generated|is ready|for)\\b",
     ].joined(separator: "|")
 
     // MARK: - Debit / credit
