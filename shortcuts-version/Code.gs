@@ -26,6 +26,8 @@ const CATEGORIES = ['Food & Dining', 'Groceries', 'Transport', 'Fuel', 'Shopping
 const CARD_BILL = 'Card Bill Payment';
 // Fixed monthly payments: counted in the month's totals but kept out of the daily budget.
 const RENT = 'Rent';
+// The home-screen app (a separate static site) reads data through this script with a secret key.
+const APP_URL = 'https://dr-azygos.github.io/daily-finance-app/';
 
 // ---------------------------------------------------------------------------
 // Web app entry points
@@ -49,8 +51,64 @@ function doPost(e) {
 
 /** Opening the web app URL (or asking Siri via a Shortcut) gives today's summary. */
 function doGet(e) {
-  if (e && e.parameter && e.parameter.sms) return reply_(logSms_(String(e.parameter.sms)));
+  const p = (e && e.parameter) || {};
+  if (p.key !== undefined) return appData_(p);
+  if (p.sms) return reply_(logSms_(String(p.sms)));
   return reply_(todaySummary_());
+}
+
+// ---------------------------------------------------------------------------
+// Data for the home-screen app
+// ---------------------------------------------------------------------------
+
+/** The secret the app must send. Created once; run `setup` to see it. */
+function appKey_() {
+  const props = PropertiesService.getScriptProperties();
+  let key = props.getProperty('APP_KEY');
+  if (!key) {
+    key = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 8);
+    props.setProperty('APP_KEY', key);
+  }
+  return key;
+}
+
+/** JSON: month tabs, the chosen month's rows (plus the month before, for comparison) and the daily budget. */
+function appData_(p) {
+  if (String(p.key) !== appKey_()) return json_({ error: 'bad_key' });
+  const ss = getSpreadsheet_();
+  const months = ss.getSheets().map(function (sh) { return sh.getName(); }).filter(isMonthTab_)
+    .sort(function (a, b) { return monthIndex_(b) - monthIndex_(a); });
+  const month = months.indexOf(String(p.month || '')) >= 0 ? String(p.month) : months[0] || null;
+  const prevName = month ? months.filter(function (m) { return monthIndex_(m) === monthIndex_(month) - 1; })[0] : null;
+  const budget = Number(ss.getSheetByName(DASH_SHEET).getRange(BUDGET_CELL).getValue()) || 0;
+  return json_({
+    months: months,
+    month: month,
+    rows: month ? tabRows_(ss.getSheetByName(month)) : [],
+    prevMonth: prevName || null,
+    prevRows: prevName ? tabRows_(ss.getSheetByName(prevName)) : [],
+    budget: budget,
+    generatedAt: Date.now(),
+  });
+}
+
+function monthIndex_(name) {
+  const parts = name.split(' ');
+  return Number(parts[1]) * 12 + MONTH_NAMES.indexOf(parts[0]);
+}
+
+/** Rows as [epochMs, type, amount, merchant, category, bank, account, reference, sms]. */
+function tabRows_(sheet) {
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.length).getValues()
+    .filter(function (r) { return r[0] instanceof Date && typeof r[2] === 'number'; })
+    .map(function (r) {
+      return [r[0].getTime(), String(r[1]), r[2], String(r[3]), String(r[4]), String(r[5]), String(r[6]), String(r[7]), String(r[8])];
+    });
+}
+
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function reply_(text) {
@@ -187,6 +245,14 @@ function sameDay_(a, b) {
 function setup() {
   const ss = getSpreadsheet_();
   Logger.log('Your Daily Finance sheet: ' + ss.getUrl());
+  const key = appKey_();
+  const service = ScriptApp.getService().getUrl();
+  if (service && /\/exec$/.test(service)) {
+    Logger.log('Open this link on your iPhone to connect the app (keep it private): ' +
+      APP_URL + '#connect=' + encodeURIComponent(service) + '&key=' + key);
+  } else {
+    Logger.log('App key (keep it private): ' + key + '. Deploy the web app, then run setup again to get a one-tap app link.');
+  }
   return ss.getUrl();
 }
 
