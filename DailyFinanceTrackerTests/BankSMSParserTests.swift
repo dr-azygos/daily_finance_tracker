@@ -151,6 +151,26 @@ final class BankSMSParserTests: XCTestCase {
         XCTAssertEqual(result.category, .food)
     }
 
+    func testSliceIMPSPayment() throws {
+        let sms = "IMPS payment of Rs. 13,000 from A/c xx6491 done on 02-Oct-26 to SHEETAL SUKHLAL LAVATRE is successful (Ref ID: 627515418066). Not you? Call 08048329999 - slice"
+        let result = try XCTUnwrap(parse(sms))
+        XCTAssertEqual(result.amount, 13000)
+        XCTAssertEqual(result.kind, .debit)
+        XCTAssertEqual(result.merchant, "Sheetal Sukhlal Lavatre")
+        XCTAssertEqual(result.bank, "slice")
+        XCTAssertEqual(result.accountLast4, "6491")
+        XCTAssertEqual(result.referenceNumber, "627515418066")
+    }
+
+    func testFederalBankUPIToCredIsCardBill() throws {
+        let sms = "Debited Rs 1980.00 from a/c X8403 on 02Oct26 01:21 via UPI to CRED Club. Ref 664120776439.Bal Rs 7735.9. Not you?Call 18004251199 -Federal Bank"
+        let result = try XCTUnwrap(parse(sms))
+        XCTAssertEqual(result.amount, 1980)
+        XCTAssertEqual(result.merchant, "CRED Club")
+        XCTAssertEqual(result.accountLast4, "8403")
+        XCTAssertEqual(result.referenceNumber, "664120776439")
+    }
+
     // MARK: - Credits
 
     func testSBICredit() throws {

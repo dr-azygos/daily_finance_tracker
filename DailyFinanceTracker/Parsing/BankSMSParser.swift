@@ -75,7 +75,7 @@ enum BankSMSParser {
     // MARK: - Debit / credit
 
     private static let debitPattern =
-        "(?i)\\b(debited|spent|sent|paid|withdrawn|withdrawal|purchase|purchased|deducted|used|using|txn of|transaction of|transferred to)\\b"
+        "(?i)\\b(debited|spent|sent|paid|withdrawn|withdrawal|purchase|purchased|deducted|used|using|txn of|transaction of|transferred to|payment of|transfer of)\\b"
     private static let creditPattern =
         "(?i)\\b(credited|received|deposited|refund|refunded|reversed|reversal)\\b"
 
@@ -225,7 +225,7 @@ enum BankSMSParser {
     }
 
     static func detectReference(in text: String) -> String? {
-        let pattern = "(?i)(?:ref(?:erence)?\\.?\\s*(?:no|num|number)?\\.?|rrn|utr|upi(?:\\s*ref)?(?:\\s*no)?)[\\s:.#-]*(\\d{6,})"
+        let pattern = "(?i)(?:ref(?:erence)?\\.?\\s*(?:no|num|number|id)?\\.?|rrn|utr|upi(?:\\s*ref)?(?:\\s*no)?)[\\s:.#-]*(\\d{6,})"
         if let ref = firstCapture(pattern, in: text) { return ref }
         return firstCapture("UPI/[A-Za-z0-9]+/(\\d{6,})/", in: text)
     }
@@ -255,6 +255,7 @@ enum BankSMSParser {
         ("Indian Overseas Bank", "indian overseas|\\biob\\b"),
         ("Indian Bank", "indian bank"),
         ("Paytm", "\\bpaytm"),
+        ("slice", "\\bslice\\b"),
     ]
 
     static func detectBank(in text: String) -> String? {

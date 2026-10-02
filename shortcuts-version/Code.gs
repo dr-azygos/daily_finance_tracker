@@ -386,7 +386,7 @@ const IGNORE_RE = new RegExp([
   '\\byour [a-z]+ order\\b|\\border (#|no\\b|id\\b)',
 ].join('|'), 'i');
 
-const DEBIT_RE = /\b(debited|spent|sent|paid|withdrawn|withdrawal|purchase|purchased|deducted|used|using|txn of|transaction of|transferred to)\b/i;
+const DEBIT_RE = /\b(debited|spent|sent|paid|withdrawn|withdrawal|purchase|purchased|deducted|used|using|txn of|transaction of|transferred to|payment of|transfer of)\b/i;
 const CREDIT_RE = /\b(credited|received|deposited|refund|refunded|reversed|reversal)\b/i;
 const CURRENCY_AMOUNT_RE = /(?:(?<![a-z])(?:rs|inr)\.?|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/gi;
 const VERB_AMOUNT_RE = /\b(?:debited|credited|spent|sent|paid|received)\s+(?:by|for|with|of)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i;
@@ -419,7 +419,7 @@ const BANKS = [
   ['IndusInd', '\\bindusind'], ['CSB Bank', '\\bcsb\\b|catholic syrian'], ['Kerala Gramin Bank', 'kerala gramin'],
   ['ESAF Bank', '\\besaf'], ['Dhanlaxmi Bank', 'dhanlaxmi'], ['AU Bank', '\\bau small finance|\\bau bank'],
   ['Bank of India', 'bank of india'], ['Indian Overseas Bank', 'indian overseas|\\biob\\b'], ['Indian Bank', 'indian bank'],
-  ['Paytm', '\\bpaytm'],
+  ['Paytm', '\\bpaytm'], ['slice', '\\bslice\\b'],
 ];
 
 /** Checked in order, so more specific groups come first ("swiggy instamart" is groceries, not food). */
@@ -572,7 +572,7 @@ function detectAccount_(text) {
 }
 
 function detectReference_(text) {
-  const m = text.match(/(?:ref(?:erence)?\.?\s*(?:no|num|number)?\.?|rrn|utr|upi(?:\s*ref)?(?:\s*no)?)[\s:.#-]*(\d{6,})/i) ||
+  const m = text.match(/(?:ref(?:erence)?\.?\s*(?:no|num|number|id)?\.?|rrn|utr|upi(?:\s*ref)?(?:\s*no)?)[\s:.#-]*(\d{6,})/i) ||
     text.match(/UPI\/[A-Za-z0-9]+\/(\d{6,})\//);
   return m ? m[1] : null;
 }
