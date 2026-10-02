@@ -1,6 +1,6 @@
 // Keeps the app itself available offline. Your data is never cached here: the page keeps
 // the last loaded month on the device and fetches fresh numbers from your Google script.
-const CACHE = 'daily-finance-v1';
+const CACHE = 'daily-finance-v2';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (event) => {

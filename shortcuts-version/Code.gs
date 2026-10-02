@@ -88,8 +88,21 @@ function appData_(p) {
     prevMonth: prevName || null,
     prevRows: prevName ? tabRows_(ss.getSheetByName(prevName)) : [],
     budget: budget,
+    monthTotals: months.map(function (name) { return monthTotal_(ss.getSheetByName(name), name); }),
     generatedAt: Date.now(),
   });
+}
+
+/** One month's headline numbers for the app's budget chart. */
+function monthTotal_(sheet, name) {
+  let spent = 0, daily = 0, income = 0;
+  tabRows_(sheet).forEach(function (r) {
+    if (r[1] === 'Income') income += r[2];
+    if (r[1] !== 'Expense' || r[4] === CARD_BILL) return;
+    spent += r[2];
+    if (r[4] !== RENT) daily += r[2];
+  });
+  return { month: name, spent: spent, daily: daily, income: income };
 }
 
 function monthIndex_(name) {
