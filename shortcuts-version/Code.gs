@@ -76,6 +76,7 @@ function appKey_() {
 function appData_(p) {
   if (String(p.key) !== appKey_()) return json_({ error: 'bad_key' });
   if (p.action === 'setCategory') return json_(setCategory_(p));
+  if (p.action === 'delete') return json_(deleteTx_(p));
   const ss = getSpreadsheet_();
   const months = ss.getSheets().map(function (sh) { return sh.getName(); }).filter(isMonthTab_)
     .sort(function (a, b) { return monthIndex_(b) - monthIndex_(a); });
@@ -123,10 +124,7 @@ function setCategory_(p) {
   lock.waitLock(15000);
   try {
     const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.length).getValues();
-    const ts = Number(p.ts), amount = Number(p.amount);
-    const target = values.findIndex(function (r) {
-      return r[0] instanceof Date && r[0].getTime() === ts && Math.abs(Number(r[2]) - amount) < 0.005;
-    });
+    const target = findTx_(values, p);
     if (target < 0) return { error: 'not_found' };
 
     const merchant = String(values[target][3]).toLowerCase();
@@ -146,6 +144,34 @@ function setCategory_(p) {
       }
     });
     return { ok: true, updated: rows.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Index into a tab's data rows of the transaction the app means (matched on timestamp and amount), or -1. */
+function findTx_(values, p) {
+  const ts = Number(p.ts), amount = Number(p.amount);
+  return values.findIndex(function (r) {
+    return r[0] instanceof Date && r[0].getTime() === ts && Math.abs(Number(r[2]) - amount) < 0.005;
+  });
+}
+
+/** App action: removes one transaction row from its month tab. */
+function deleteTx_(p) {
+  const ss = getSpreadsheet_();
+  const name = String(p.month || '');
+  const sheet = isMonthTab_(name) ? ss.getSheetByName(name) : null;
+  if (!sheet || sheet.getLastRow() < 2) return { error: 'not_found' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.length).getValues();
+    const target = findTx_(values, p);
+    if (target < 0) return { error: 'not_found' };
+    sheet.deleteRow(target + 2);
+    return { ok: true, deleted: 1 };
   } finally {
     lock.releaseLock();
   }

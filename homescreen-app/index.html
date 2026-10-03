@@ -160,7 +160,10 @@ button { font: inherit; color: inherit; }
 .splash .card { color: var(--ink); padding: 16px; display: grid; gap: 10px; }
 
 /* change-category sheet */
-.detail .edit { justify-self: start; margin-top: 2px; }
+.detail .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.btn.danger { background: #ff5a4f; box-shadow: 0 14px 26px -14px rgba(255,90,79,0.9); }
+.btn.ghost.danger { background: #fff1ef; color: #d6453b; box-shadow: none; }
+.sheet .quote { margin: 0; padding: 10px 12px; background: var(--bg); border-radius: 14px; font-size: 0.84rem; color: var(--muted); overflow-wrap: anywhere; }
 .scrim { position: fixed; inset: 0; z-index: 20; background: rgba(42,33,88,0.42); display: flex; align-items: flex-end; justify-content: center; }
 .sheet { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; background: #fff; border-radius: 28px 28px 0 0; padding: 10px 18px calc(18px + env(safe-area-inset-bottom)); display: grid; gap: 14px; box-shadow: 0 -20px 40px -20px rgba(42,33,88,0.6); }
 .sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); justify-self: center; }
@@ -449,7 +452,8 @@ button { font: inherit; color: inherit; }
         h += '<div class="detail"><dl><dt>Category</dt><dd>' + esc(r.category) + "</dd><dt>Type</dt><dd>" + esc(r.type) + "</dd>" +
           (r.bank ? "<dt>Bank</dt><dd>" + esc(r.bank) + (r.account ? " ••" + esc(r.account) : "") + "</dd>" : "") +
           (r.ref ? "<dt>Reference</dt><dd>" + esc(r.ref) + "</dd>" : "") + "</dl>" + (r.sms ? "<p>" + esc(r.sms) + "</p>" : "") +
-          '<button class="btn ghost edit" data-edit="' + esc(key) + '">Change category</button></div>';
+          '<div class="acts"><button class="btn ghost" data-edit="' + esc(key) + '">Change category</button>' +
+          '<button class="btn ghost danger" data-del="' + esc(key) + '">Delete</button></div></div>';
       }
       return h;
     }).join("");
@@ -646,6 +650,7 @@ button { font: inherit; color: inherit; }
   function sheetView() {
     var e = state.edit, r = e && findRow(e.key);
     if (!r) return "";
+    if (e.mode === "delete") return deleteView(e, r);
     var others = r.type === "Income" ? 0 : sameMerchant(r);
     return '<div class="scrim" data-sheet="close"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">' +
       '<span class="grab"></span><h2 id="sheetTitle">Category for ' + esc(r.merchant) + "</h2>" +
@@ -662,10 +667,52 @@ button { font: inherit; color: inherit; }
       '<div class="acts"><button class="btn ghost" data-sheet="close">Cancel</button><button class="btn" data-sheet="save"' + (e.saving ? " disabled" : "") + ">" + (e.saving ? "SAVING…" : "SAVE") + "</button></div>" +
       '<p class="note">Saved straight to your Google Sheet. New SMS from this merchant will use it too.</p></div></div>';
   }
+  function deleteView(e, r) {
+    return '<div class="scrim" data-sheet="close"><div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="sheetTitle">' +
+      '<span class="grab"></span><h2 id="sheetTitle">Delete this transaction?</h2>' +
+      '<p class="sub">' + esc(r.merchant) + " · " + inr(r.amount) + " · " + dmy(r.when) + " " + hhmm(r.when) + "</p>" +
+      (r.sms ? '<p class="quote">' + esc(r.sms) + "</p>" : "") +
+      "<p class=\"note\" style=\"text-align:left\">This removes the row from your Google Sheet. It can't be undone from the app.</p>" +
+      (e.error ? '<span class="err-text" role="alert">' + esc(e.error) + "</span>" : "") +
+      '<div class="acts"><button class="btn ghost" data-sheet="close">Keep it</button><button class="btn danger" data-sheet="delete"' + (e.saving ? " disabled" : "") + ">" + (e.saving ? "DELETING…" : "DELETE") + "</button></div></div></div>";
+  }
+  function appCall(params) {
+    var cfg = readConfig();
+    var url = cfg.url + (cfg.url.indexOf("?") < 0 ? "?" : "&") + "key=" + encodeURIComponent(cfg.key);
+    Object.keys(params).forEach(function (k) { url += "&" + k + "=" + encodeURIComponent(params[k]); });
+    return fetch(url, { cache: "no-store" }).then(function (res) { return res.text(); }).then(function (text) {
+      var data; try { data = JSON.parse(text); } catch (x) { throw "Your script is out of date. Deploy a New version of the latest script."; }
+      if (data.error === "bad_key") throw "The app key doesn't match. Open the connect link again.";
+      if (data.error === "not_found") throw "Couldn't find this row in the sheet. Refresh and try again.";
+      if (!data.ok) throw "Your script is out of date. Deploy a New version of the latest script.";
+      return data;
+    });
+  }
+  function failMsg(msg) {
+    return typeof msg === "string" ? msg : navigator.onLine === false ? "You're offline. Try again when connected." : "Couldn't reach your sheet. Try again.";
+  }
+  function deleteTx() {
+    var e = state.edit, r = e && findRow(e.key);
+    if (!r || !readConfig() || e.saving) return;
+    var month = state.month.name;
+    e.saving = true; e.error = null; renderSheet();
+    appCall({ action: "delete", month: month, ts: r.when.t, amount: r.amount })
+      .then(function () {
+        state.rows = state.rows.filter(function (x) { return x !== r; });
+        state.open = null; state.edit = null; renderSheet(); render();
+        toast("Transaction deleted");
+        load(month);
+      })
+      .catch(function (msg) {
+        if (!state.edit) return;
+        state.edit.saving = false; state.edit.error = failMsg(msg); renderSheet();
+      });
+  }
   function renderSheet() {
     var el = document.getElementById("sheet");
     el.innerHTML = sheetView();
     document.body.style.overflow = state.edit ? "hidden" : "";
+    if (state.edit) document.getElementById("toast").hidden = true;
   }
   var toastTimer;
   function toast(msg) {
@@ -687,15 +734,8 @@ button { font: inherit; color: inherit; }
     var targets = [r].concat(all ? state.rows.filter(function (x) { return x !== r && x.type !== "Income" && x.merchant.toLowerCase() === r.merchant.toLowerCase(); }) : []);
     var before = targets.map(function (x) { return { row: x, category: x.category, type: x.type }; });
     e.saving = true; e.error = null; renderSheet();
-    var url = cfg.url + (cfg.url.indexOf("?") < 0 ? "?" : "&") + "key=" + encodeURIComponent(cfg.key) + "&action=setCategory&month=" + encodeURIComponent(month) +
-      "&ts=" + r.when.t + "&amount=" + encodeURIComponent(r.amount) + "&category=" + encodeURIComponent(category) + "&all=" + (all ? 1 : 0);
-    fetch(url, { cache: "no-store" })
-      .then(function (res) { return res.text(); })
-      .then(function (text) {
-        var data; try { data = JSON.parse(text); } catch (x) { throw "Your script is out of date. Deploy a New version of the latest script."; }
-        if (data.error === "bad_key") throw "The app key doesn't match. Open the connect link again.";
-        if (data.error === "not_found") throw "Couldn't find this row in the sheet. Refresh and try again.";
-        if (!data.ok) throw "Your script is out of date. Deploy a New version of the latest script.";
+    appCall({ action: "setCategory", month: month, ts: r.when.t, amount: r.amount, category: category, all: all ? 1 : 0 })
+      .then(function (data) {
         targets.forEach(function (x) { x.type = retype(x, category); x.category = category; });
         state.edit = null; renderSheet(); render();
         toast(data.updated > 1 ? "Updated " + data.updated + " payments" : "Category saved");
@@ -704,9 +744,7 @@ button { font: inherit; color: inherit; }
       .catch(function (msg) {
         before.forEach(function (b) { b.row.category = b.category; b.row.type = b.type; });
         if (!state.edit) return;
-        state.edit.saving = false;
-        state.edit.error = typeof msg === "string" ? msg : navigator.onLine === false ? "You're offline. Try again when connected." : "Couldn't reach your sheet. Try again.";
-        renderSheet();
+        state.edit.saving = false; state.edit.error = failMsg(msg); renderSheet();
       });
   }
   document.getElementById("sheet").addEventListener("click", function (ev) {
@@ -716,6 +754,7 @@ button { font: inherit; color: inherit; }
     if (t.dataset.sheet === "close" && (t === ev.target || t.tagName === "BUTTON")) { if (!e.saving) { state.edit = null; renderSheet(); } return; }
     if (t.dataset.pick) { e.category = t.dataset.pick; e.error = null; renderSheet(); return; }
     if (t.dataset.sheet === "save") saveCategory();
+    if (t.dataset.sheet === "delete") deleteTx();
   });
   document.getElementById("sheet").addEventListener("input", function (ev) {
     var e = state.edit; if (!e) return;
@@ -745,6 +784,7 @@ button { font: inherit; color: inherit; }
     if (t.dataset.period) { state.period = t.dataset.period; render(); return; }
     if (t.dataset.cat !== undefined) { state.cat = t.dataset.cat || null; render(); return; }
     if (t.dataset.edit) { var er = findRow(t.dataset.edit); if (er) { state.edit = { key: t.dataset.edit, category: er.category, original: er.category, all: false, saving: false, error: null }; renderSheet(); } return; }
+    if (t.dataset.del) { if (findRow(t.dataset.del)) { state.edit = { mode: "delete", key: t.dataset.del, saving: false, error: null }; renderSheet(); } return; }
     if (t.dataset.open) { state.open = state.open === t.dataset.open ? null : t.dataset.open; render(); return; }
     var act = t.dataset.act;
     if (act === "refresh") refresh();
