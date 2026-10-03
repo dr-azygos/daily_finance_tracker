@@ -75,6 +75,7 @@ function appKey_() {
 /** JSON: month tabs, the chosen month's rows (plus the month before, for comparison) and the daily budget. */
 function appData_(p) {
   if (String(p.key) !== appKey_()) return json_({ error: 'bad_key' });
+  if (p.action === 'setCategory') return json_(setCategory_(p));
   const ss = getSpreadsheet_();
   const months = ss.getSheets().map(function (sh) { return sh.getName(); }).filter(isMonthTab_)
     .sort(function (a, b) { return monthIndex_(b) - monthIndex_(a); });
@@ -103,6 +104,51 @@ function monthTotal_(sheet, name) {
     if (r[4] !== RENT) daily += r[2];
   });
   return { month: name, spent: spent, daily: daily, income: income };
+}
+
+/**
+ * Changes a transaction's category from the app. The row is found by its timestamp and amount,
+ * so edits made in the sheet meanwhile (sorting, deleting rows) can't hit the wrong row.
+ * With all=1, every non-income payment to the same merchant in that month changes too.
+ */
+function setCategory_(p) {
+  const category = String(p.category || '').trim().slice(0, 40);
+  if (!category) return { error: 'no_category' };
+  const ss = getSpreadsheet_();
+  const name = String(p.month || '');
+  const sheet = isMonthTab_(name) ? ss.getSheetByName(name) : null;
+  if (!sheet || sheet.getLastRow() < 2) return { error: 'not_found' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.length).getValues();
+    const ts = Number(p.ts), amount = Number(p.amount);
+    const target = values.findIndex(function (r) {
+      return r[0] instanceof Date && r[0].getTime() === ts && Math.abs(Number(r[2]) - amount) < 0.005;
+    });
+    if (target < 0) return { error: 'not_found' };
+
+    const merchant = String(values[target][3]).toLowerCase();
+    const rows = [target];
+    if (String(p.all) === '1') {
+      values.forEach(function (r, i) {
+        if (i !== target && String(r[3]).toLowerCase() === merchant && r[1] !== 'Income') rows.push(i);
+      });
+    }
+    rows.forEach(function (i) {
+      const r = values[i];
+      sheet.getRange(i + 2, 5).setValue(safe_(category));
+      // Card bill payments are transfers, not spending; moving out of that category makes them spending again.
+      if (r[1] !== 'Income') {
+        const type = category === CARD_BILL ? 'Transfer' : (r[1] === 'Transfer' && r[4] === CARD_BILL ? 'Expense' : r[1]);
+        if (type !== r[1]) sheet.getRange(i + 2, 2).setValue(type);
+      }
+    });
+    return { ok: true, updated: rows.length };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function monthIndex_(name) {

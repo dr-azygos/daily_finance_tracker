@@ -158,10 +158,30 @@ button { font: inherit; color: inherit; }
 .splash svg.art { width: 100%; max-width: 360px; height: auto; justify-self: center; }
 .splash ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; opacity: 0.9; font-size: 0.92rem; }
 .splash .card { color: var(--ink); padding: 16px; display: grid; gap: 10px; }
+
+/* change-category sheet */
+.detail .edit { justify-self: start; margin-top: 2px; }
+.scrim { position: fixed; inset: 0; z-index: 20; background: rgba(42,33,88,0.42); display: flex; align-items: flex-end; justify-content: center; }
+.sheet { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; background: #fff; border-radius: 28px 28px 0 0; padding: 10px 18px calc(18px + env(safe-area-inset-bottom)); display: grid; gap: 14px; box-shadow: 0 -20px 40px -20px rgba(42,33,88,0.6); }
+.sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); justify-self: center; }
+.sheet h2 { margin: 0; font-size: 1.15rem; color: var(--ink); }
+.sheet .sub { margin: -10px 0 0; color: var(--muted); font-size: 0.86rem; }
+.catgrid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px 6px; }
+.catgrid .tile { width: auto; }
+.catgrid .tile .sq { width: 54px; height: 54px; border-radius: 16px; }
+.catgrid .tile span { max-width: 76px; }
+.check { display: flex; gap: 10px; align-items: center; font-size: 0.9rem; }
+.check input { width: 20px; height: 20px; accent-color: var(--violet); flex: none; }
+.sheet .acts { display: flex; gap: 10px; }
+.sheet .acts .btn { flex: 1; }
+.btn[disabled] { opacity: 0.6; cursor: default; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 30; background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 0.88rem; box-shadow: 0 10px 24px -12px rgba(0,0,0,0.6); max-width: calc(100% - 32px); }
 </style>
 </head>
 <body>
 <div class="app" id="app"><main id="view"></main></div>
+<div id="sheet"></div>
+<div class="toast" id="toast" role="status" hidden></div>
 <nav class="tabbar" id="tabbar" hidden aria-label="Sections">
   <button data-tab="home" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7M5 10v10h14V10M10 20v-5h4v5"/></svg></button>
   <button data-tab="history" aria-label="History"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
@@ -184,7 +204,7 @@ button { font: inherit; color: inherit; }
   var state = {
     connected: false, view: "home", months: [], month: null, rows: null, prevRows: null, budget: null, totals: [],
     updatedAt: null, loading: false, error: null, staleError: null,
-    mode: "spend", period: "month", cat: null, q: "", open: null, showConnect: false
+    mode: "spend", period: "month", cat: null, q: "", open: null, showConnect: false, edit: null
   };
 
   // ---------- helpers ----------
@@ -428,7 +448,8 @@ button { font: inherit; color: inherit; }
       if (open) {
         h += '<div class="detail"><dl><dt>Category</dt><dd>' + esc(r.category) + "</dd><dt>Type</dt><dd>" + esc(r.type) + "</dd>" +
           (r.bank ? "<dt>Bank</dt><dd>" + esc(r.bank) + (r.account ? " ••" + esc(r.account) : "") + "</dd>" : "") +
-          (r.ref ? "<dt>Reference</dt><dd>" + esc(r.ref) + "</dd>" : "") + "</dl>" + (r.sms ? "<p>" + esc(r.sms) + "</p>" : "") + "</div>";
+          (r.ref ? "<dt>Reference</dt><dd>" + esc(r.ref) + "</dd>" : "") + "</dl>" + (r.sms ? "<p>" + esc(r.sms) + "</p>" : "") +
+          '<button class="btn ghost edit" data-edit="' + esc(key) + '">Change category</button></div>';
       }
       return h;
     }).join("");
@@ -607,6 +628,111 @@ button { font: inherit; color: inherit; }
     v.innerHTML = html;
   }
 
+  // ---------- change category ----------
+  var STANDARD = ["Food & Dining", "Groceries", "Transport", "Fuel", "Shopping", "Bills & Recharge", "Health", "Entertainment",
+    "Travel", "Education", "Rent", "Transfers", "Cash Withdrawal", CARD_BILL, "Income", "Other"];
+  function findRow(key) { return (state.rows || []).filter(function (r) { return r.when.t + "|" + r.i === key; })[0] || null; }
+  function categoryChoices() {
+    var seen = {}, out = [];
+    STANDARD.concat((state.rows || []).map(function (r) { return r.category; })).forEach(function (c) {
+      var k = String(c || "").toLowerCase(); if (k && !seen[k]) { seen[k] = 1; out.push(c); }
+    });
+    return out;
+  }
+  function sameMerchant(r) {
+    var m = r.merchant.toLowerCase();
+    return (state.rows || []).filter(function (x) { return x !== r && x.type !== "Income" && x.merchant.toLowerCase() === m; }).length;
+  }
+  function sheetView() {
+    var e = state.edit, r = e && findRow(e.key);
+    if (!r) return "";
+    var others = r.type === "Income" ? 0 : sameMerchant(r);
+    return '<div class="scrim" data-sheet="close"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">' +
+      '<span class="grab"></span><h2 id="sheetTitle">Category for ' + esc(r.merchant) + "</h2>" +
+      '<p class="sub">' + inr(r.amount) + " · " + dmy(r.when) + " · now " + esc(r.category) + "</p>" +
+      '<div class="catgrid">' + categoryChoices().map(function (c) {
+        var on = c.toLowerCase() === e.category.toLowerCase(), cc = cat(c);
+        return '<button class="tile' + (on ? " on" : "") + '" data-pick="' + esc(c) + '" aria-pressed="' + on + '"><span class="sq" style="' + (on ? "" : "color:" + cc.color) + '">' +
+          (cc.icon ? svg(ICON[cc.icon]) : "<b>" + esc(c.charAt(0).toUpperCase()) + "</b>") + "</span><span>" + esc(cc.label) + "</span></button>";
+      }).join("") + "</div>" +
+      '<div class="field"><label for="newCat">Or type a new one</label><input id="newCat" maxlength="40" placeholder="e.g. Gifts" value="' +
+        esc(categoryChoices().some(function (c) { return c.toLowerCase() === e.category.toLowerCase(); }) ? "" : e.category) + '"></div>' +
+      (others ? '<label class="check"><input type="checkbox" id="allSame"' + (e.all ? " checked" : "") + "> Also change the other " + others + " " + esc(r.merchant) + " payment" + (others > 1 ? "s" : "") + " this month</label>" : "") +
+      (e.error ? '<span class="err-text" role="alert">' + esc(e.error) + "</span>" : "") +
+      '<div class="acts"><button class="btn ghost" data-sheet="close">Cancel</button><button class="btn" data-sheet="save"' + (e.saving ? " disabled" : "") + ">" + (e.saving ? "SAVING…" : "SAVE") + "</button></div>" +
+      '<p class="note">Saved straight to your Google Sheet. New SMS from this merchant will use it too.</p></div></div>';
+  }
+  function renderSheet() {
+    var el = document.getElementById("sheet");
+    el.innerHTML = sheetView();
+    document.body.style.overflow = state.edit ? "hidden" : "";
+  }
+  var toastTimer;
+  function toast(msg) {
+    var t = document.getElementById("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 2600);
+  }
+  function retype(r, category) {
+    if (category === CARD_BILL) return "Transfer";
+    if (r.type === "Transfer" && r.category === CARD_BILL) return "Expense";
+    return r.type;
+  }
+  function saveCategory() {
+    var e = state.edit, r = e && findRow(e.key), cfg = readConfig();
+    if (!r || !cfg || e.saving) return;
+    var category = e.category.trim().slice(0, 40);
+    if (!category) { e.error = "Pick or type a category."; renderSheet(); return; }
+    if (category === r.category && !e.all) { state.edit = null; renderSheet(); return; }
+    var month = state.month.name, all = !!(e.all && r.type !== "Income");
+    var targets = [r].concat(all ? state.rows.filter(function (x) { return x !== r && x.type !== "Income" && x.merchant.toLowerCase() === r.merchant.toLowerCase(); }) : []);
+    var before = targets.map(function (x) { return { row: x, category: x.category, type: x.type }; });
+    e.saving = true; e.error = null; renderSheet();
+    var url = cfg.url + (cfg.url.indexOf("?") < 0 ? "?" : "&") + "key=" + encodeURIComponent(cfg.key) + "&action=setCategory&month=" + encodeURIComponent(month) +
+      "&ts=" + r.when.t + "&amount=" + encodeURIComponent(r.amount) + "&category=" + encodeURIComponent(category) + "&all=" + (all ? 1 : 0);
+    fetch(url, { cache: "no-store" })
+      .then(function (res) { return res.text(); })
+      .then(function (text) {
+        var data; try { data = JSON.parse(text); } catch (x) { throw "Your script is out of date. Deploy a New version of the latest script."; }
+        if (data.error === "bad_key") throw "The app key doesn't match. Open the connect link again.";
+        if (data.error === "not_found") throw "Couldn't find this row in the sheet. Refresh and try again.";
+        if (!data.ok) throw "Your script is out of date. Deploy a New version of the latest script.";
+        targets.forEach(function (x) { x.type = retype(x, category); x.category = category; });
+        state.edit = null; renderSheet(); render();
+        toast(data.updated > 1 ? "Updated " + data.updated + " payments" : "Category saved");
+        load(month);
+      })
+      .catch(function (msg) {
+        before.forEach(function (b) { b.row.category = b.category; b.row.type = b.type; });
+        if (!state.edit) return;
+        state.edit.saving = false;
+        state.edit.error = typeof msg === "string" ? msg : navigator.onLine === false ? "You're offline. Try again when connected." : "Couldn't reach your sheet. Try again.";
+        renderSheet();
+      });
+  }
+  document.getElementById("sheet").addEventListener("click", function (ev) {
+    var e = state.edit; if (!e) return;
+    var t = ev.target.closest("[data-pick],[data-sheet]");
+    if (!t) return;
+    if (t.dataset.sheet === "close" && (t === ev.target || t.tagName === "BUTTON")) { if (!e.saving) { state.edit = null; renderSheet(); } return; }
+    if (t.dataset.pick) { e.category = t.dataset.pick; e.error = null; renderSheet(); return; }
+    if (t.dataset.sheet === "save") saveCategory();
+  });
+  document.getElementById("sheet").addEventListener("input", function (ev) {
+    var e = state.edit; if (!e) return;
+    if (ev.target.id === "newCat") {
+      var v = ev.target.value.trim(); e.category = v || e.original;
+      [].forEach.call(document.querySelectorAll("#sheet [data-pick]"), function (b) {
+        var on = b.dataset.pick.toLowerCase() === e.category.toLowerCase();
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on);
+        b.querySelector(".sq").style.color = on ? "" : cat(b.dataset.pick).color;
+      });
+    }
+  });
+  document.getElementById("sheet").addEventListener("change", function (ev) {
+    if (state.edit && ev.target.id === "allSame") state.edit.all = ev.target.checked;
+  });
+  document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && state.edit && !state.edit.saving) { state.edit = null; renderSheet(); } });
+
   // ---------- events ----------
   document.getElementById("tabbar").addEventListener("click", function (ev) {
     var b = ev.target.closest("button[data-tab]"); if (!b) return;
@@ -618,6 +744,7 @@ button { font: inherit; color: inherit; }
     if (t.dataset.mode) { state.mode = t.dataset.mode; render(); return; }
     if (t.dataset.period) { state.period = t.dataset.period; render(); return; }
     if (t.dataset.cat !== undefined) { state.cat = t.dataset.cat || null; render(); return; }
+    if (t.dataset.edit) { var er = findRow(t.dataset.edit); if (er) { state.edit = { key: t.dataset.edit, category: er.category, original: er.category, all: false, saving: false, error: null }; renderSheet(); } return; }
     if (t.dataset.open) { state.open = state.open === t.dataset.open ? null : t.dataset.open; render(); return; }
     var act = t.dataset.act;
     if (act === "refresh") refresh();
