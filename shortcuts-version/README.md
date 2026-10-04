@@ -29,3 +29,15 @@ Sheets created with the earlier single-tab layout (one "Transactions" tab) are u
 - Repeat for `credited`, `spent` and `sent`.
 
 Opening the web app URL in a browser shows today's spending. Adding `?sms=<url-encoded SMS>` logs that message.
+
+## Catching SMS that arrive while you're offline
+
+The automation can't send an SMS without internet, and iOS doesn't retry. To get a reminder instead of a silent miss, build the automation's actions in this order:
+
+1. **Text**: your web app URL ending in `/exec`.
+2. **URL Encode** the *Shortcut Input*.
+3. **Add New Reminder**: title `Log missed bank SMS`, notes = *Shortcut Input*, URL = `Text?sms=URL Encoded Text` (tap the URL field and insert the two variables with `?sms=` between them).
+4. **Get Contents of URL** (unchanged: the *Text* URL, POST, JSON key `sms` = *Shortcut Input*).
+5. **Edit Reminder**: *Reminder* from step 3, set **Is Completed** on. (If your iOS has no Edit Reminder, use **Remove Reminders** and tap Always Allow once.)
+
+Online, step 5 ticks the reminder off immediately. Offline, step 4 fails, the shortcut stops, and the reminder stays. When you're back online, open the reminder and tap its link: the script logs the SMS (with the SMS's own date) and replies with what it logged, or "Already logged." Then tick the reminder.
