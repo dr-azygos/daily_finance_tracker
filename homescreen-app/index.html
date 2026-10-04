@@ -49,6 +49,9 @@ button { font: inherit; color: inherit; }
 .round { appearance: none; border: 0; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; background: rgba(255,255,255,0.14); color: #fff; }
 .round svg { width: 18px; height: 18px; }
 .round:disabled { opacity: 0.35; cursor: default; }
+.hbtns { display: flex; gap: 8px; }
+.sheet textarea { font: inherit; font-size: 0.95rem; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: #fff; color: var(--ink); width: 100%; min-height: 120px; resize: vertical; }
+.sheet .info { padding: 10px 12px; border-radius: 14px; background: var(--violet-soft); color: var(--violet); font-size: 0.88rem; }
 .spin svg { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin svg { animation: none; } }
@@ -435,6 +438,8 @@ button { font: inherit; color: inherit; }
       '<button class="round" data-act="newer" aria-label="Next month"' + (i <= 0 ? " disabled" : "") + ">" + svg("M9 5l7 7-7 7", 2.4) + "</button></div>";
   }
   function refreshBtn(extra) { return '<button class="round' + (state.loading ? " spin" : "") + '" data-act="refresh" aria-label="Refresh"' + (extra || "") + ">" + svg(REFRESH) + "</button>"; }
+  var PLUS = "M12 5v14M5 12h14";
+  function headBtns() { return '<span class="hbtns"><button class="round" data-act="add" aria-label="Add from SMS">' + svg(PLUS, 2.4) + "</button>" + refreshBtn() + "</span>"; }
   function staleNote() {
     return state.staleError ? '<div class="notice err" role="status"><b>' + esc(state.staleError.t) + "</b><span>" + esc(state.staleError.d) + " Showing what loaded " + ago(state.updatedAt) + ".</span></div>" : "";
   }
@@ -467,7 +472,7 @@ button { font: inherit; color: inherit; }
     var pts = series(isCurrent(mo) ? "week" : "month");
     var focus = isCurrent(mo) ? pts.length - 1 : peak(pts);
 
-    var head = '<header class="head"><div class="head-top">' + monthPicker() + refreshBtn() + "</div>" +
+    var head = '<header class="head"><div class="head-top">' + monthPicker() + headBtns() + "</div>" +
       '<div class="amount">' + big(total) + "</div>" +
       '<div class="amount-sub">' + (showSpend ? "Spent in " : "Received in ") + FULL[mo.m] + "</div>" +
       '<div class="seg"><button data-mode="income" class="' + (showSpend ? "" : "on") + '" aria-pressed="' + !showSpend + '">Income</button>' +
@@ -500,7 +505,7 @@ button { font: inherit; color: inherit; }
     var total = pts.reduce(function (s, p) { return s + p.value; }, 0);
     var focus = isCurrent(mo) ? pts.length - 1 - (period === "month" ? daysIn(mo) - n.d : 0) : peak(pts);
 
-    var head = '<header class="head"><div class="head-top">' + monthPicker() + refreshBtn() + "</div>" +
+    var head = '<header class="head"><div class="head-top">' + monthPicker() + headBtns() + "</div>" +
       '<div class="title">History</div>' +
       '<div class="seg"><button data-period="week" class="' + (period === "week" ? "on" : "") + '" aria-pressed="' + (period === "week") + '">Week</button>' +
       '<button data-period="month" class="' + (period === "month" ? "on" : "") + '" aria-pressed="' + (period === "month") + '">Month</button></div>' +
@@ -648,7 +653,9 @@ button { font: inherit; color: inherit; }
     return (state.rows || []).filter(function (x) { return x !== r && x.type !== "Income" && x.merchant.toLowerCase() === m; }).length;
   }
   function sheetView() {
-    var e = state.edit, r = e && findRow(e.key);
+    var e = state.edit;
+    if (e && e.mode === "add") return addView(e);
+    var r = e && findRow(e.key);
     if (!r) return "";
     if (e.mode === "delete") return deleteView(e, r);
     var others = r.type === "Income" ? 0 : sameMerchant(r);
@@ -675,6 +682,50 @@ button { font: inherit; color: inherit; }
       "<p class=\"note\" style=\"text-align:left\">This removes the row from your Google Sheet. It can't be undone from the app.</p>" +
       (e.error ? '<span class="err-text" role="alert">' + esc(e.error) + "</span>" : "") +
       '<div class="acts"><button class="btn ghost" data-sheet="close">Keep it</button><button class="btn danger" data-sheet="delete"' + (e.saving ? " disabled" : "") + ">" + (e.saving ? "DELETING…" : "DELETE") + "</button></div></div></div>";
+  }
+  function addView(e) {
+    return '<div class="scrim" data-sheet="close"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">' +
+      '<span class="grab"></span><h2 id="sheetTitle">Add from SMS</h2>' +
+      '<p class="sub">Long-press the bank SMS in Messages, tap Copy, then paste it here.</p>' +
+      '<textarea id="smsText" placeholder="Rs. 285 debited from A/c xx8282 on 03-Oct-26 to SWIGGY…" aria-label="Bank SMS">' + esc(e.text) + "</textarea>" +
+      (navigator.clipboard && navigator.clipboard.readText ? '<button class="btn ghost" data-sheet="paste" style="justify-self:start">Paste</button>' : "") +
+      (e.info ? '<div class="info" role="status">' + esc(e.info) + "</div>" : "") +
+      (e.error ? '<span class="err-text" role="alert">' + esc(e.error) + "</span>" : "") +
+      '<div class="acts"><button class="btn ghost" data-sheet="close">Cancel</button><button class="btn" data-sheet="add"' + (e.saving ? " disabled" : "") + ">" + (e.saving ? "ADDING…" : "ADD") + "</button></div>" +
+      '<p class="note">Safe to paste an SMS twice: one that is already in your sheet is skipped.</p></div></div>';
+  }
+  function addSms() {
+    var e = state.edit, cfg = readConfig();
+    if (!e || !cfg || e.saving) return;
+    var text = e.text.trim();
+    if (!text) { e.error = "Paste the bank SMS first."; e.info = null; renderSheet(); return; }
+    e.saving = true; e.error = null; e.info = null; renderSheet();
+    // The script logs an SMS sent as ?sms=, the same way the Shortcut's POST does.
+    fetch(cfg.url + (cfg.url.indexOf("?") < 0 ? "?" : "&") + "sms=" + encodeURIComponent(text), { cache: "no-store" })
+      .then(function (res) { return res.text(); })
+      .then(function (reply) {
+        reply = reply.trim();
+        if (!state.edit) return;
+        state.edit.saving = false;
+        if (/^(Spent|Received|Card bill)/.test(reply)) {
+          state.edit = null; renderSheet();
+          toast(reply.split(" · ")[0]);
+          refresh();
+        } else if (/^Already logged/.test(reply)) {
+          state.edit.info = "This one is already in your sheet, so nothing was added.";
+          renderSheet();
+        } else if (/^(Not a bank transaction|Nothing received)/.test(reply)) {
+          state.edit.error = "This doesn't look like a bank transaction SMS, so nothing was added. Check you copied the whole message.";
+          renderSheet();
+        } else {
+          state.edit.error = "Your script didn't reply as expected. Deploy a New version of the latest script.";
+          renderSheet();
+        }
+      })
+      .catch(function () {
+        if (!state.edit) return;
+        state.edit.saving = false; state.edit.error = failMsg(); renderSheet();
+      });
   }
   function appCall(params) {
     var cfg = readConfig();
@@ -755,9 +806,21 @@ button { font: inherit; color: inherit; }
     if (t.dataset.pick) { e.category = t.dataset.pick; e.error = null; renderSheet(); return; }
     if (t.dataset.sheet === "save") saveCategory();
     if (t.dataset.sheet === "delete") deleteTx();
+    if (t.dataset.sheet === "add") addSms();
+    if (t.dataset.sheet === "paste") {
+      navigator.clipboard.readText().then(function (txt) {
+        if (!state.edit || !txt) return;
+        state.edit.text = txt; state.edit.error = null; state.edit.info = null; renderSheet();
+      }).catch(function () {});
+    }
   });
   document.getElementById("sheet").addEventListener("input", function (ev) {
     var e = state.edit; if (!e) return;
+    if (ev.target.id === "smsText") {
+      e.text = ev.target.value; e.error = null; e.info = null;
+      [].forEach.call(document.querySelectorAll("#sheet .err-text, #sheet .info"), function (n) { n.remove(); });
+      return;
+    }
     if (ev.target.id === "newCat") {
       var v = ev.target.value.trim(); e.category = v || e.original;
       [].forEach.call(document.querySelectorAll("#sheet [data-pick]"), function (b) {
@@ -788,6 +851,7 @@ button { font: inherit; color: inherit; }
     if (t.dataset.open) { state.open = state.open === t.dataset.open ? null : t.dataset.open; render(); return; }
     var act = t.dataset.act;
     if (act === "refresh") refresh();
+    else if (act === "add") { state.edit = { mode: "add", text: "", saving: false, error: null, info: null }; renderSheet(); var ta = document.getElementById("smsText"); if (ta) ta.focus(); }
     else if (act === "older") shiftMonth(1);
     else if (act === "newer") shiftMonth(-1);
     else if (act === "start") { state.showConnect = true; render(); }

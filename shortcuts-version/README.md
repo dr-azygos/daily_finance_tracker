@@ -30,14 +30,17 @@ Sheets created with the earlier single-tab layout (one "Transactions" tab) are u
 
 Opening the web app URL in a browser shows today's spending. Adding `?sms=<url-encoded SMS>` logs that message.
 
-## Catching SMS that arrive while you're offline
+## Knowing when an SMS wasn't logged
 
-The automation can't send an SMS without internet, and iOS doesn't retry. To get a reminder instead of a silent miss, build the automation's actions in this order:
+The automation can't send an SMS without internet, and iOS doesn't retry. Add these actions at the top of each bank SMS automation, before **Get Contents of URL**:
 
-1. **Text**: your web app URL ending in `/exec`.
-2. **URL Encode** the *Shortcut Input*.
-3. **Add New Reminder**: title `Log missed bank SMS`, notes = *Shortcut Input*, URL = `Text?sms=URL Encoded Text` (tap the URL field and insert the two variables with `?sms=` between them).
-4. **Get Contents of URL** (unchanged: the *Text* URL, POST, JSON key `sms` = *Shortcut Input*).
-5. **Edit Reminder**: *Reminder* from step 3, set **Is Completed** on. (If your iOS has no Edit Reminder, use **Remove Reminders** and tap Always Allow once.)
+1. **Get Network Details**: Wi-Fi › Network Name.
+2. **Get Network Details**: Cellular › Number of Signal Bars.
+3. **If** *Number of Signal Bars* **is** `0`
+   - **If** *Network Details* (the Wi-Fi name from step 1) **does not have any value**
+     - **Show Notification**: `⚠️ Not logged (no internet). Add it in the app with +` and the *Shortcut Input* on the next line.
+     - **Stop This Shortcut**
+   - **End If**
+4. **End If**
 
-Online, step 5 ticks the reminder off immediately. Offline, step 4 fails, the shortcut stops, and the reminder stays. When you're back online, open the reminder and tap its link: the script logs the SMS (with the SMS's own date) and replies with what it logged, or "Already logged." Then tick the reminder.
+With no Wi-Fi and no signal you get that notification instead of a silent miss. Other connection failures (signal but no data) stop at Get Contents of URL, and iOS shows its own *Automation failed* banner. Either way, add the SMS by hand: copy it in Messages, open the app, tap **+**, paste, **Add**. An SMS already in the sheet is skipped, and the SMS's own date is used.
